@@ -164,19 +164,51 @@ class GameUI:
             hover_color=DARK_RED
         )
 
+        # Special ability buttons (at top of screen)
+        self.ability_buttons: List[Button] = []
+        self.create_ability_buttons()
+
         # Selected tower and placement
         self.selected_tower_type: Optional[str] = None
         self.selected_tower: Optional[object] = None
         self.placement_valid = False
 
+    def create_ability_buttons(self):
+        """Create buttons for special abilities."""
+        ability_types = ['airstrike', 'freeze_all', 'cash_boost', 'damage_boost', 'health_restore']
+        button_width = 140
+        button_height = 35
+        spacing = 10
+        total_width = len(ability_types) * (button_width + spacing) - spacing
+        start_x = (self.panel_x - total_width) // 2
+
+        for i, ability_type in enumerate(ability_types):
+            stats = SPECIAL_ABILITIES[ability_type]
+            x = start_x + i * (button_width + spacing)
+            y = 10
+
+            button = Button(
+                x, y, button_width, button_height,
+                f"{stats['name']} (${stats['cost']})",
+                color=PURPLE,
+                hover_color=(150, 0, 200),
+                font_size=18
+            )
+            button.ability_type = ability_type
+            self.ability_buttons.append(button)
+
     def create_tower_buttons(self):
         """Create buttons for each tower type."""
         button_width = (UI_PANEL_WIDTH - UI_PADDING * 3) // 2
-        button_height = 80
+        button_height = 70
         x_offset = self.panel_x + UI_PADDING
         y_offset = 150
 
-        tower_types = ['basic', 'sniper', 'rapid', 'splash', 'laser']
+        # All 11 tower types
+        tower_types = [
+            'basic', 'sniper', 'rapid', 'splash', 'laser',
+            'ice', 'poison', 'electric', 'artillery', 'support', 'flame'
+        ]
 
         for i, tower_type in enumerate(tower_types):
             row = i // 2
@@ -188,7 +220,7 @@ class GameUI:
             button = TowerButton(x, y, button_width, button_height, tower_type)
             self.tower_buttons.append(button)
 
-    def update(self, mouse_pos: Tuple[int, int], money: int):
+    def update(self, mouse_pos: Tuple[int, int], money: int, ability_manager=None):
         """Update UI elements."""
         # Update tower buttons
         for button in self.tower_buttons:
@@ -200,17 +232,28 @@ class GameUI:
         self.upgrade_button.update(mouse_pos)
         self.sell_button.update(mouse_pos)
 
+        # Update ability buttons
+        for button in self.ability_buttons:
+            button.update(mouse_pos)
+            if ability_manager:
+                ability = ability_manager.get_ability(button.ability_type)
+                button.enabled = ability.is_ready() and money >= ability.cost
+
         # Enable/disable upgrade and sell based on selection
         self.upgrade_button.enabled = self.selected_tower is not None
         self.sell_button.enabled = self.selected_tower is not None
 
-    def draw(self, surface: pygame.Surface, game_state: dict):
+    def draw(self, surface: pygame.Surface, game_state: dict, ability_manager=None):
         """
         Draw the UI.
 
         Args:
             game_state: Dictionary with health, money, wave, score, etc.
+            ability_manager: AbilityManager instance for cooldown display
         """
+        # Draw ability buttons first
+        self.draw_ability_buttons(surface, ability_manager)
+
         # Draw panel background
         panel_rect = pygame.Rect(self.panel_x, self.panel_y,
                                 self.panel_width, self.panel_height)
@@ -357,6 +400,53 @@ class GameUI:
         )
         pygame.draw.rect(surface, tower_color, preview_rect)
         pygame.draw.rect(surface, BLACK, preview_rect, 2)
+
+    def draw_ability_buttons(self, surface: pygame.Surface, ability_manager=None):
+        """Draw special ability buttons with cooldown overlays."""
+        for button in self.ability_buttons:
+            # Draw button
+            button.draw(surface)
+
+            # Draw cooldown overlay if not ready
+            if ability_manager:
+                ability = ability_manager.get_ability(button.ability_type)
+                if not ability.is_ready():
+                    # Draw cooldown overlay
+                    cooldown_percent = ability.get_cooldown_percent()
+                    overlay_height = int(button.rect.height * (1.0 - cooldown_percent))
+
+                    if overlay_height > 0:
+                        overlay_rect = pygame.Rect(
+                            button.rect.x, button.rect.y,
+                            button.rect.width, overlay_height
+                        )
+                        overlay = pygame.Surface((button.rect.width, overlay_height))
+                        overlay.set_alpha(180)
+                        overlay.fill(BLACK)
+                        surface.blit(overlay, overlay_rect.topleft)
+
+                    # Draw cooldown time
+                    cooldown_time = int(ability.current_cooldown)
+                    font = pygame.font.Font(None, 24)
+                    time_text = font.render(str(cooldown_time), True, WHITE)
+                    time_rect = time_text.get_rect(center=button.rect.center)
+                    surface.blit(time_text, time_rect)
+
+                # Draw active indicator
+                if ability.active:
+                    pygame.draw.rect(surface, GOLD, button.rect, 3)
+
+    def handle_ability_button_click(self, mouse_pos: Tuple[int, int]) -> Optional[str]:
+        """
+        Check if any ability button was clicked.
+
+        Returns:
+            Ability type if clicked, None otherwise
+        """
+        for button in self.ability_buttons:
+            if button.is_clicked(mouse_pos, True):
+                return button.ability_type
+        return None
 
 
 class GameOverScreen:

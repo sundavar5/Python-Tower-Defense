@@ -9,12 +9,16 @@ from src.tower import Tower, create_tower
 from src.ui import GameUI, GameOverScreen
 from src.utils import pixel_to_grid, distance
 from src.projectile import SplashProjectile
+from src.particles import ParticleSystem
+from src.statistics import Statistics, AchievementSystem, SaveSystem
+from src.abilities import AbilityManager
+from src.sound import SoundManager
 
 
 class Game:
     """Main game class."""
 
-    def __init__(self):
+    def __init__(self, difficulty: str = 'normal', map_layout: str = 'classic'):
         """Initialize the game."""
         # Pygame initialization
         pygame.init()
@@ -24,18 +28,27 @@ class Game:
         self.clock = pygame.time.Clock()
         self.running = True
 
+        # Game settings
+        self.difficulty = difficulty
+        self.map_layout = map_layout
+        self.difficulty_settings = DIFFICULTY_SETTINGS[difficulty]
+
         # Game state
         self.game_active = True
         self.victory = False
 
         # Initialize game objects
-        self.game_map = GameMap()
-        self.wave_manager = WaveManager(self.game_map.waypoints_pixel)
+        self.game_map = GameMap(map_layout)
+        difficulty_mult = {
+            'health': self.difficulty_settings['enemy_health_multiplier'],
+            'speed': self.difficulty_settings['enemy_speed_multiplier']
+        }
+        self.wave_manager = WaveManager(self.game_map.waypoints_pixel, difficulty_mult)
         self.towers: List[Tower] = []
 
-        # Game resources
-        self.health = STARTING_HEALTH
-        self.money = STARTING_MONEY
+        # Game resources (apply difficulty multipliers)
+        self.health = int(STARTING_HEALTH * self.difficulty_settings['health_multiplier'])
+        self.money = int(STARTING_MONEY * self.difficulty_settings['money_multiplier'])
         self.score = 0
 
         # UI
@@ -47,7 +60,27 @@ class Game:
         self.selected_tower: Optional[Tower] = None
 
         # Particles and effects
-        self.particles = []
+        self.particle_system = ParticleSystem()
+
+        # Statistics and achievements
+        self.statistics = Statistics()
+        self.achievement_system = AchievementSystem(self.statistics)
+        self.save_system = SaveSystem()
+
+        # Load saved data
+        saved_data = self.save_system.load()
+        if saved_data:
+            self.statistics.load_from_dict(saved_data.get('statistics', {}))
+            self.achievement_system.load_from_dict(saved_data.get('achievements', {}))
+
+        # Special abilities
+        self.ability_manager = AbilityManager()
+
+        # Sound manager
+        self.sound_manager = SoundManager(enabled=True)
+
+        # Track wave health at start for perfect wave achievement
+        self.wave_start_health = self.health
 
     def run(self):
         """Main game loop."""
@@ -103,13 +136,19 @@ class Game:
 
         # Update UI
         if self.game_active:
-            self.ui.update(mouse_pos, self.money)
+            self.ui.update(mouse_pos, self.money, self.ability_manager)
         else:
             self.game_over_screen.update(mouse_pos)
 
     def handle_game_click(self, mouse_pos: Tuple[int, int]):
         """Handle clicks during active gameplay."""
         # Check UI button clicks first
+        # Special ability buttons
+        ability_type = self.ui.handle_ability_button_click(mouse_pos)
+        if ability_type:
+            self.use_ability(ability_type, mouse_pos)
+            return
+
         # Tower selection buttons
         tower_type = self.ui.handle_tower_button_click(mouse_pos)
         if tower_type:
@@ -132,12 +171,25 @@ class Game:
             if upgrade_cost > 0 and self.money >= upgrade_cost:
                 if self.selected_tower.upgrade():
                     self.money -= upgrade_cost
+                    self.statistics.money_spent += upgrade_cost
+                    self.statistics.towers_upgraded += 1
+                    # Sound and particle effects
+                    self.sound_manager.play_tower_upgrade()
+                    self.particle_system.create_money_collect(
+                        self.selected_tower.x, self.selected_tower.y
+                    )
             return
 
         # Sell button
         if self.ui.is_sell_clicked(mouse_pos) and self.selected_tower:
             sell_value = self.selected_tower.get_sell_value()
             self.money += sell_value
+            self.statistics.towers_sold += 1
+            # Sound and particle effects
+            self.sound_manager.play_tower_sell()
+            self.particle_system.create_explosion(
+                self.selected_tower.x, self.selected_tower.y, GRAY
+            )
             self.towers.remove(self.selected_tower)
             self.selected_tower = None
             self.ui.selected_tower = None
@@ -172,6 +224,15 @@ class Game:
         tower = create_tower(self.placing_tower_type, grid_pos, GRID_SIZE)
         self.towers.append(tower)
         self.money -= tower_cost
+        self.statistics.money_spent += tower_cost
+        self.statistics.towers_built += 1
+
+        # Sound and particle effects
+        self.sound_manager.play_tower_place()
+        self.particle_system.create_money_collect(
+            grid_pos[1] * GRID_SIZE + GRID_SIZE // 2,
+            grid_pos[0] * GRID_SIZE + GRID_SIZE // 2
+        )
 
         # Don't clear placement type - allow multiple placements
         # self.placing_tower_type = None
@@ -224,35 +285,160 @@ class Game:
 
     def update(self, dt: float):
         """Update game state."""
+        # Update abilities
+        self.ability_manager.update(dt)
+
+        # Update particle system
+        self.particle_system.update(dt)
+
         # Update wave manager and enemies
         enemies_killed, enemies_reached_end, boss_kills = self.wave_manager.update(dt)
 
         # Handle enemy deaths (give money and score)
         if enemies_killed > 0:
             # Calculate rewards from killed enemies
+            money_earned = 0
             for enemy in self.wave_manager.enemies[:]:
                 if not enemy.alive:
-                    self.money += enemy.reward
-                    self.score += enemy.reward
+                    reward = int(enemy.reward * self.ability_manager.get_money_multiplier())
+                    self.money += reward
+                    self.score += reward
+                    money_earned += reward
+
+                    # Create death particles and sound
+                    self.particle_system.create_explosion(enemy.x, enemy.y, enemy.color)
+                    self.sound_manager.play_enemy_death()
+
+            # Update statistics
+            self.statistics.total_kills += enemies_killed
+            self.statistics.boss_kills += boss_kills
+            self.statistics.money_earned += money_earned
 
         # Handle enemies reaching the end (lose health)
         if enemies_reached_end > 0:
             self.health -= enemies_reached_end
+            self.statistics.lives_lost += enemies_reached_end
 
         # Check game over
         if self.health <= 0:
             self.game_active = False
             self.victory = False
+            self.sound_manager.play_game_over()
+            # Save statistics
+            self._save_game_data()
+
+        # Check for wave completion and perfect wave achievement
+        if self.wave_manager.is_wave_complete() and not self.wave_manager.wave_active:
+            if self.wave_start_health == self.health and self.wave_manager.current_wave > 0:
+                self.statistics.perfect_waves += 1
+            self.wave_start_health = self.health
+
+        # Apply damage boost to towers
+        damage_multiplier = self.ability_manager.get_damage_multiplier()
 
         # Update towers
         for tower in self.towers:
-            # Pass all enemies to splash towers
+            # Apply damage boost
+            if hasattr(tower, '_base_damage'):
+                tower.damage = int(tower._base_damage * damage_multiplier)
+            else:
+                tower._base_damage = tower.damage
+
+            # Pass all enemies to splash towers and electric towers
             if hasattr(tower, 'projectiles'):
                 for projectile in tower.projectiles:
                     if isinstance(projectile, SplashProjectile):
                         projectile.all_enemies = self.wave_manager.enemies
+                    if hasattr(projectile, 'all_enemies'):  # Electric towers
+                        projectile.all_enemies = self.wave_manager.enemies
 
+            # Update tower
             tower.update(dt, self.wave_manager)
+
+            # Create particles for projectile impacts
+            if hasattr(tower, 'projectiles'):
+                for projectile in tower.projectiles:
+                    if hasattr(projectile, 'hit') and projectile.hit:
+                        self.particle_system.create_impact_spark(
+                            projectile.x, projectile.y, tower.color
+                        )
+
+        # Handle special abilities
+        self._handle_abilities()
+
+        # Update achievements
+        self.achievement_system.update()
+
+        # Check for victory (all waves complete)
+        if self.wave_manager.current_wave >= len(WAVES) and self.wave_manager.is_wave_complete():
+            self.game_active = False
+            self.victory = True
+            self.sound_manager.play_victory()
+            self.statistics.waves_completed = max(self.statistics.waves_completed,
+                                                 self.wave_manager.current_wave)
+            self.statistics.highest_wave = max(self.statistics.highest_wave,
+                                              self.wave_manager.current_wave)
+            self._save_game_data()
+
+    def use_ability(self, ability_type: str, mouse_pos: Tuple[int, int]):
+        """Use a special ability."""
+        # Check if we can afford it
+        ability = self.ability_manager.get_ability(ability_type)
+        if not ability or not ability.is_ready() or self.money < ability.cost:
+            return
+
+        # Special handling for airstrike (needs target position)
+        if ability_type == 'airstrike':
+            # Only allow if clicking on game area
+            if mouse_pos[0] < self.ui.panel_x:
+                if self.ability_manager.use_ability(ability_type, self.money, mouse_pos):
+                    self.money -= ability.cost
+                    self.sound_manager.play_ability()
+        else:
+            # Other abilities don't need target position
+            if self.ability_manager.use_ability(ability_type, self.money):
+                self.money -= ability.cost
+                self.sound_manager.play_ability()
+
+                # Health restore - immediately apply
+                if ability_type == 'health_restore':
+                    self.health = min(
+                        int(STARTING_HEALTH * self.difficulty_settings['health_multiplier']),
+                        self.health + ability.restore_amount
+                    )
+
+    def _handle_abilities(self):
+        """Handle special ability effects."""
+        # Check for airstrike
+        airstrike_data = self.ability_manager.consume_airstrike()
+        if airstrike_data:
+            x, y, damage, radius = airstrike_data
+            # Create massive explosion effect
+            for _ in range(50):
+                self.particle_system.create_explosion(x, y, (255, 100, 0))
+
+            # Damage all enemies in radius
+            for enemy in self.wave_manager.enemies:
+                if enemy.alive:
+                    dist = distance((x, y), (enemy.x, enemy.y))
+                    if dist <= radius:
+                        enemy.take_damage(damage)
+
+        # Check for freeze all
+        if self.ability_manager.check_freeze_all():
+            # Freeze all enemies
+            for enemy in self.wave_manager.enemies:
+                if enemy.alive:
+                    enemy.apply_status_effect('freeze', 3.0)
+                    self.particle_system.create_freeze_effect(enemy.x, enemy.y)
+
+    def _save_game_data(self):
+        """Save game statistics and achievements."""
+        save_data = {
+            'statistics': self.statistics.to_dict(),
+            'achievements': self.achievement_system.to_dict()
+        }
+        self.save_system.save(save_data)
 
     def draw(self):
         """Draw everything."""
@@ -270,6 +456,9 @@ class Game:
         # Draw enemies
         self.wave_manager.draw(self.screen)
 
+        # Draw particles
+        self.particle_system.draw(self.screen)
+
         # Draw tower placement preview
         if self.placing_tower_type:
             mouse_pos = pygame.mouse.get_pos()
@@ -286,7 +475,7 @@ class Game:
             'wave': self.wave_manager.current_wave,
             'score': self.score,
         }
-        self.ui.draw(self.screen, game_state)
+        self.ui.draw(self.screen, game_state, self.ability_manager)
 
         # Draw game over screen
         if not self.game_active:
@@ -303,17 +492,26 @@ class Game:
         self.game_active = True
         self.victory = False
 
-        # Reset game objects
-        self.game_map = GameMap()
-        self.wave_manager = WaveManager(self.game_map.waypoints_pixel)
+        # Reset game objects (preserve difficulty and map)
+        self.game_map = GameMap(self.map_layout)
+        difficulty_mult = {
+            'health': self.difficulty_settings['enemy_health_multiplier'],
+            'speed': self.difficulty_settings['enemy_speed_multiplier']
+        }
+        self.wave_manager = WaveManager(self.game_map.waypoints_pixel, difficulty_mult)
         self.towers = []
 
-        # Reset resources
-        self.health = STARTING_HEALTH
-        self.money = STARTING_MONEY
+        # Reset resources (apply difficulty multipliers)
+        self.health = int(STARTING_HEALTH * self.difficulty_settings['health_multiplier'])
+        self.money = int(STARTING_MONEY * self.difficulty_settings['money_multiplier'])
         self.score = 0
 
         # Reset UI state
         self.placing_tower_type = None
         self.selected_tower = None
         self.ui.selected_tower = None
+
+        # Reset particle system and abilities
+        self.particle_system = ParticleSystem()
+        self.ability_manager = AbilityManager()
+        self.wave_start_health = self.health
