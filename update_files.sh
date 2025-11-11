@@ -1,3 +1,10 @@
+#!/bin/bash
+# Script to update remaining game files efficiently
+
+echo "Updating game files with new features..."
+
+# Update map.py to support multiple layouts
+cat > src/map_enhanced.py << 'EOF'
 """Enhanced game map with multiple layouts."""
 
 import pygame
@@ -69,3 +76,8 @@ class GameMap:
     def get_end_position(self) -> Tuple[float, float]:
         """Get end position in pixels."""
         return grid_to_pixel(self.end_pos, self.grid_size)
+EOF
+
+mv src/map_enhanced.py src/map.py
+
+echo "Map system updated!"
