@@ -211,7 +211,7 @@ class Game:
     def update(self, dt: float):
         """Update game state."""
         # Update wave manager and enemies
-        enemies_killed, enemies_reached_end = self.wave_manager.update(dt)
+        enemies_killed, enemies_reached_end, boss_kills = self.wave_manager.update(dt)
 
         # Handle enemy deaths (give money and score)
         if enemies_killed > 0:
