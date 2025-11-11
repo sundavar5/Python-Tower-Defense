@@ -62,9 +62,9 @@ class Tower:
 
         # Find and attack target
         if self.fire_cooldown <= 0:
-            # Get target
-            self.target = wave_manager.get_furthest_enemy_in_range(
-                (self.x, self.y), self.range
+            # Get target (default to 'first' which is furthest along path)
+            self.target = wave_manager.get_targeted_enemy(
+                (self.x, self.y), self.range, 'first'
             )
 
             if self.target:
@@ -224,8 +224,8 @@ class LaserTower(Tower):
     def update(self, dt: float, wave_manager):
         """Update laser tower logic."""
         # Get target
-        self.target = wave_manager.get_furthest_enemy_in_range(
-            (self.x, self.y), self.range
+        self.target = wave_manager.get_targeted_enemy(
+            (self.x, self.y), self.range, 'first'
         )
 
         if self.target:
