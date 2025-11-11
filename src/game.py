@@ -18,6 +18,7 @@ class Game:
         """Initialize the game."""
         # Pygame initialization
         pygame.init()
+        self.fullscreen = False
         self.screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
         pygame.display.set_caption("Tower Defense")
         self.clock = pygame.time.Clock()
@@ -97,6 +98,8 @@ class Game:
                 if event.key == pygame.K_SPACE and self.game_active:
                     if self.wave_manager.is_wave_complete():
                         self.wave_manager.start_wave()
+                if event.key == pygame.K_F11:
+                    self.toggle_fullscreen()
 
         # Update UI
         if self.game_active:
@@ -207,6 +210,17 @@ class Game:
                 return False
 
         return True
+
+    def toggle_fullscreen(self):
+        """Toggle between fullscreen and windowed mode."""
+        self.fullscreen = not self.fullscreen
+
+        if self.fullscreen:
+            # Switch to fullscreen
+            self.screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.FULLSCREEN)
+        else:
+            # Switch to windowed mode
+            self.screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
 
     def update(self, dt: float):
         """Update game state."""
