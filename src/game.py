@@ -12,6 +12,7 @@ from src.projectile import SplashProjectile
 from src.particles import ParticleSystem
 from src.statistics import Statistics, AchievementSystem, SaveSystem
 from src.abilities import AbilityManager
+from src.sound import SoundManager
 
 
 class Game:
@@ -74,6 +75,9 @@ class Game:
 
         # Special abilities
         self.ability_manager = AbilityManager()
+
+        # Sound manager
+        self.sound_manager = SoundManager(enabled=True)
 
         # Track wave health at start for perfect wave achievement
         self.wave_start_health = self.health
@@ -169,7 +173,8 @@ class Game:
                     self.money -= upgrade_cost
                     self.statistics.money_spent += upgrade_cost
                     self.statistics.towers_upgraded += 1
-                    # Create upgrade particle effect
+                    # Sound and particle effects
+                    self.sound_manager.play_tower_upgrade()
                     self.particle_system.create_money_collect(
                         self.selected_tower.x, self.selected_tower.y
                     )
@@ -180,7 +185,8 @@ class Game:
             sell_value = self.selected_tower.get_sell_value()
             self.money += sell_value
             self.statistics.towers_sold += 1
-            # Create sell particle effect
+            # Sound and particle effects
+            self.sound_manager.play_tower_sell()
             self.particle_system.create_explosion(
                 self.selected_tower.x, self.selected_tower.y, GRAY
             )
@@ -221,7 +227,8 @@ class Game:
         self.statistics.money_spent += tower_cost
         self.statistics.towers_built += 1
 
-        # Create particle effect
+        # Sound and particle effects
+        self.sound_manager.play_tower_place()
         self.particle_system.create_money_collect(
             grid_pos[1] * GRID_SIZE + GRID_SIZE // 2,
             grid_pos[0] * GRID_SIZE + GRID_SIZE // 2
@@ -298,8 +305,9 @@ class Game:
                     self.score += reward
                     money_earned += reward
 
-                    # Create death particles
+                    # Create death particles and sound
                     self.particle_system.create_explosion(enemy.x, enemy.y, enemy.color)
+                    self.sound_manager.play_enemy_death()
 
             # Update statistics
             self.statistics.total_kills += enemies_killed
@@ -315,6 +323,7 @@ class Game:
         if self.health <= 0:
             self.game_active = False
             self.victory = False
+            self.sound_manager.play_game_over()
             # Save statistics
             self._save_game_data()
 
@@ -364,6 +373,7 @@ class Game:
         if self.wave_manager.current_wave >= len(WAVES) and self.wave_manager.is_wave_complete():
             self.game_active = False
             self.victory = True
+            self.sound_manager.play_victory()
             self.statistics.waves_completed = max(self.statistics.waves_completed,
                                                  self.wave_manager.current_wave)
             self.statistics.highest_wave = max(self.statistics.highest_wave,
@@ -383,10 +393,12 @@ class Game:
             if mouse_pos[0] < self.ui.panel_x:
                 if self.ability_manager.use_ability(ability_type, self.money, mouse_pos):
                     self.money -= ability.cost
+                    self.sound_manager.play_ability()
         else:
             # Other abilities don't need target position
             if self.ability_manager.use_ability(ability_type, self.money):
                 self.money -= ability.cost
+                self.sound_manager.play_ability()
 
                 # Health restore - immediately apply
                 if ability_type == 'health_restore':
