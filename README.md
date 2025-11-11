@@ -200,6 +200,7 @@ python main.py
 | Upgrade Tower | Click Upgrade (tower selected) |
 | Sell Tower | Click Sell (tower selected) |
 | Use Ability | Click ability button |
+| Toggle Fullscreen | F11 |
 
 ## 📖 **HOW TO PLAY**
 

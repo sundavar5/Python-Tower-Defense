@@ -15,6 +15,7 @@ Controls:
 - Right Click: Cancel placement / Deselect tower
 - Space: Start next wave
 - ESC: Cancel tower placement
+- F11: Toggle fullscreen
 """
 
 import sys
@@ -31,6 +32,7 @@ def main():
     print("  - Right Click: Cancel/Deselect")
     print("  - Space: Start wave")
     print("  - ESC: Cancel placement")
+    print("  - F11: Toggle fullscreen")
     print("\nStarting game...")
     print("="*50)
 
